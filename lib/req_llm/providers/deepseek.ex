@@ -19,16 +19,16 @@ defmodule ReqLLM.Providers.Deepseek do
   ## Examples
 
       # Basic usage
-      ReqLLM.generate_text("deepseek:deepseek-chat", "Hello!")
+      ReqLLM.generate_text(%{provider: :deepseek, id: "deepseek-chat"}, "Hello!")
 
       # With custom parameters
-      ReqLLM.generate_text("deepseek:deepseek-reasoner", "Write a function",
+      ReqLLM.generate_text(%{provider: :deepseek, id: "deepseek-reasoner"}, "Write a function",
         temperature: 0.2,
         max_tokens: 2000
       )
 
       # Streaming
-      ReqLLM.stream_text("deepseek:deepseek-chat", "Tell me a story")
+      ReqLLM.stream_text(%{provider: :deepseek, id: "deepseek-chat"}, "Tell me a story")
       |> Enum.each(&IO.write/1)
 
   ## Models
@@ -47,6 +47,22 @@ defmodule ReqLLM.Providers.Deepseek do
     default_env_key: "DEEPSEEK_API_KEY"
 
   use ReqLLM.Provider.Defaults
+
+  @impl ReqLLM.Provider
+  def prepare_request(operation, _model_spec, _input, _opts)
+      when operation in [:embedding, :transcription, :speech] do
+    supported_operations = [:chat, :object]
+
+    {:error,
+     ReqLLM.Error.Invalid.Parameter.exception(
+       parameter:
+         "operation: #{inspect(operation)} not supported by #{inspect(__MODULE__)}. Supported operations: #{inspect(supported_operations)}"
+     )}
+  end
+
+  def prepare_request(operation, model_spec, input, opts) do
+    ReqLLM.Provider.Defaults.prepare_request(__MODULE__, operation, model_spec, input, opts)
+  end
 
   @provider_schema []
 end

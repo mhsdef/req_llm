@@ -72,6 +72,17 @@ defmodule ReqLLM.Providers.DeepseekTest do
       {:error, error} = Deepseek.prepare_request(:unsupported, model, context, [])
       assert %ReqLLM.Error.Invalid.Parameter{} = error
     end
+
+    test "prepare_request rejects unsupported DeepSeek operations" do
+      model = deepseek_model()
+
+      for operation <- [:embedding, :transcription, :speech] do
+        {:error, error} = Deepseek.prepare_request(operation, model, "payload", [])
+
+        assert %ReqLLM.Error.Invalid.Parameter{} = error
+        assert error.parameter =~ "operation: #{inspect(operation)} not supported"
+      end
+    end
   end
 
   describe "authentication wiring" do

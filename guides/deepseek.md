@@ -2,6 +2,10 @@
 
 Use DeepSeek AI models through their OpenAI-compatible API.
 
+DeepSeek models are not yet in the LLMDB catalog, so use inline model specs.
+ReqLLM currently supports chat, streaming, and structured output workflows for
+this provider.
+
 ## Overview
 
 DeepSeek provides powerful language models including:
@@ -127,6 +131,11 @@ ReqLLM.generate_text(
 | `deepseek-reasoner` | Complex reasoning tasks | 64K tokens |
 
 Check https://platform.deepseek.com/docs for the latest model information.
+
+## Unsupported Operations
+
+DeepSeek's documented API surface does not currently include embeddings or audio
+endpoints. ReqLLM rejects those operations for the built-in DeepSeek provider.
 
 ## Troubleshooting
 
