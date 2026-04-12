@@ -318,7 +318,11 @@ defmodule ReqLLM.Schema do
     case Map.get(updated_schema, "properties") do
       properties
       when is_map(properties) and map_size(properties) > 0 and is_list(property_order) ->
-        Map.put_new(updated_schema, "propertyOrdering", property_order)
+        Map.put(
+          updated_schema,
+          "propertyOrdering",
+          finalized_property_order(properties, property_order)
+        )
 
       _ ->
         updated_schema
@@ -400,6 +404,10 @@ defmodule ReqLLM.Schema do
 
   defp property_child_sources(_source), do: %{}
 
+  defp item_schema_source(source) when is_list(source) do
+    if Keyword.keyword?(source), do: source
+  end
+
   defp item_schema_source(source) when is_map(source) and not is_struct(source) do
     source["items"] || source[:items]
   end
@@ -419,8 +427,7 @@ defmodule ReqLLM.Schema do
     keys =
       case property_order do
         order when is_list(order) ->
-          existing_keys = Map.keys(normalized_properties)
-          order ++ Enum.reject(existing_keys, &(&1 in order))
+          finalized_property_order(normalized_properties, order)
 
         _ ->
           Map.keys(normalized_properties)
@@ -434,6 +441,19 @@ defmodule ReqLLM.Schema do
       end)
 
     Jason.OrderedObject.new(entries)
+  end
+
+  defp finalized_property_order(normalized_properties, property_order)
+       when is_map(normalized_properties) and is_list(property_order) do
+    existing_keys = Map.keys(normalized_properties)
+
+    normalized_property_order =
+      property_order
+      |> Enum.map(&normalize_schema_key/1)
+      |> Enum.filter(&Map.has_key?(normalized_properties, &1))
+      |> Enum.uniq()
+
+    normalized_property_order ++ Enum.reject(existing_keys, &(&1 in normalized_property_order))
   end
 
   @doc false

@@ -661,6 +661,64 @@ defmodule ReqLLM.SchemaTest do
     end
   end
 
+  describe "property ordering helpers" do
+    test "order_json_schema/2 preserves object item order inside arrays" do
+      schema = [
+        results: [
+          type:
+            {:list,
+             {:map,
+              [
+                third: [type: :string, required: true],
+                first: [type: :string],
+                second: [type: :string]
+              ]}}
+        ]
+      ]
+
+      json_schema =
+        schema
+        |> Schema.to_json()
+        |> Schema.order_json_schema(schema)
+
+      assert ordered_object_keys(json_schema["properties"]["results"]["items"]["properties"]) == [
+               "third",
+               "first",
+               "second"
+             ]
+    end
+
+    test "with_property_ordering/2 filters unknown propertyOrdering entries" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "alpha" => %{"type" => "string"},
+          "beta" => %{"type" => "string"}
+        },
+        "propertyOrdering" => ["missing", "beta"]
+      }
+
+      ordered_schema = Schema.with_property_ordering(schema)
+
+      assert ordered_schema["propertyOrdering"] == ["beta", "alpha"]
+    end
+
+    test "order_json_schema/2 does not emit missing properties from propertyOrdering" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "alpha" => %{"type" => "string"},
+          "beta" => %{"type" => "string"}
+        },
+        "propertyOrdering" => ["missing", "beta"]
+      }
+
+      ordered_schema = Schema.order_json_schema(schema)
+
+      assert ordered_object_keys(ordered_schema["properties"]) == ["beta", "alpha"]
+    end
+  end
+
   describe "validate/2" do
     test "validates data against simple schema" do
       schema = [name: [type: :string, required: true], age: [type: :integer]]
@@ -1140,5 +1198,9 @@ defmodule ReqLLM.SchemaTest do
       refute Map.has_key?(result["toolSpec"], "strict")
       assert result["toolSpec"]["name"] == "default_tool"
     end
+  end
+
+  defp ordered_object_keys(%Jason.OrderedObject{values: values}) do
+    Enum.map(values, &elem(&1, 0))
   end
 end

@@ -249,6 +249,40 @@ defmodule ReqLLM.Providers.GoogleVertex.GeminiTest do
                "second"
              ]
     end
+
+    test "infers propertyOrdering for array item objects for gemini-2.5-flash" do
+      context = context_fixture("Generate a profile")
+
+      compiled_schema = %{
+        schema: [
+          results: [
+            type:
+              {:list,
+               {:map,
+                [
+                  third: [type: :string, required: true],
+                  first: [type: :string],
+                  second: [type: :string]
+                ]}},
+            required: true
+          ]
+        ]
+      }
+
+      body =
+        Gemini.format_request(
+          "gemini-2.5-flash",
+          context,
+          operation: :object,
+          compiled_schema: compiled_schema,
+          max_tokens: 1000
+        )
+
+      item_schema =
+        body["generationConfig"]["responseJsonSchema"]["properties"]["results"]["items"]
+
+      assert item_schema["propertyOrdering"] == ["third", "first", "second"]
+    end
   end
 
   describe "ResponseBuilder - streaming reasoning_details extraction" do

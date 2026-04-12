@@ -1416,6 +1416,63 @@ defmodule ReqLLM.Providers.OpenAITest do
       assert ordered_object_keys(properties) == ["zeta", "alpha", "beta"]
       assert ordered_object_keys(properties["beta"]["properties"]) == ["third", "first", "second"]
     end
+
+    test "gpt-5-mini preserves schema property order for array item objects" do
+      {:ok, model} = ReqLLM.model("openai:gpt-5-mini")
+
+      schema = [
+        results: [
+          type:
+            {:list,
+             {:map,
+              [
+                third: [type: :string, required: true],
+                first: [type: :string],
+                second: [type: :string]
+              ]}},
+          required: true
+        ]
+      ]
+
+      response_format = %{
+        type: "json_schema",
+        json_schema: %{
+          name: "profile_schema",
+          strict: true,
+          schema: schema
+        }
+      }
+
+      context = %ReqLLM.Context{
+        messages: [
+          %ReqLLM.Message{
+            role: :user,
+            content: [%ReqLLM.Message.ContentPart{type: :text, text: "Generate a profile"}]
+          }
+        ]
+      }
+
+      request = %Req.Request{
+        url: URI.parse("https://api.openai.com/v1/responses"),
+        method: :post,
+        options: [
+          context: context,
+          model: model.model,
+          provider_options: [response_format: response_format]
+        ]
+      }
+
+      encoded_request = ReqLLM.Providers.OpenAI.ResponsesAPI.encode_body(request)
+      body = Jason.decode!(encoded_request.body, objects: :ordered_objects)
+
+      properties = body["text"]["format"]["schema"]["properties"]
+      item_schema = properties["results"]["items"]
+
+      refute Map.has_key?(body["text"]["format"]["schema"], "propertyOrdering")
+      refute Map.has_key?(item_schema, "propertyOrdering")
+      assert ordered_object_keys(properties) == ["results"]
+      assert ordered_object_keys(item_schema["properties"]) == ["third", "first", "second"]
+    end
   end
 
   defp ordered_object_keys(%Jason.OrderedObject{values: values}) do
