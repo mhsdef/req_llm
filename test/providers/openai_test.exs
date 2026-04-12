@@ -1411,6 +1411,8 @@ defmodule ReqLLM.Providers.OpenAITest do
 
       properties = body["text"]["format"]["schema"]["properties"]
 
+      refute Map.has_key?(body["text"]["format"]["schema"], "propertyOrdering")
+      refute Map.has_key?(properties["beta"], "propertyOrdering")
       assert ordered_object_keys(properties) == ["zeta", "alpha", "beta"]
       assert ordered_object_keys(properties["beta"]["properties"]) == ["third", "first", "second"]
     end

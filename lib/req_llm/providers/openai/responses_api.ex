@@ -1146,6 +1146,7 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
                 schema_source
                 |> ReqLLM.Schema.to_json()
                 |> ReqLLM.Schema.order_json_schema(schema_source)
+                |> ReqLLM.Schema.strip_property_ordering()
             end
 
           %{

@@ -331,6 +331,32 @@ defmodule ReqLLM.Schema do
 
   def with_property_ordering(schema, _source), do: schema
 
+  @doc """
+  Removes `propertyOrdering` recursively from a JSON Schema.
+
+  Useful for providers like OpenAI that do not accept the field on the wire
+  even though ReqLLM may use it internally as an ordering hint.
+  """
+  @spec strip_property_ordering(any()) :: any()
+  def strip_property_ordering(%Jason.OrderedObject{values: values}) do
+    values
+    |> Enum.reject(&(elem(&1, 0) == "propertyOrdering"))
+    |> Enum.map(fn {key, value} -> {key, strip_property_ordering(value)} end)
+    |> Jason.OrderedObject.new()
+  end
+
+  def strip_property_ordering(schema) when is_map(schema) and not is_struct(schema) do
+    schema
+    |> Enum.reject(fn {key, _value} -> normalize_schema_key(key) == "propertyOrdering" end)
+    |> Map.new(fn {key, value} -> {normalize_schema_key(key), strip_property_ordering(value)} end)
+  end
+
+  def strip_property_ordering(schema) when is_list(schema) do
+    Enum.map(schema, &strip_property_ordering/1)
+  end
+
+  def strip_property_ordering(schema), do: schema
+
   # Private helper functions
 
   defp normalize_schema_key(key) when is_atom(key), do: Atom.to_string(key)

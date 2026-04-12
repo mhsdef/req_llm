@@ -259,6 +259,7 @@ defmodule ReqLLM.Providers.OpenAI.ChatAPI do
             schema
             |> ReqLLM.Schema.to_json()
             |> ReqLLM.Schema.order_json_schema(schema)
+            |> ReqLLM.Schema.strip_property_ordering()
 
           put_in(m, [:json_schema, :schema], ordered_schema)
 
@@ -268,6 +269,7 @@ defmodule ReqLLM.Providers.OpenAI.ChatAPI do
             schema
             |> ReqLLM.Schema.to_json()
             |> ReqLLM.Schema.order_json_schema(schema)
+            |> ReqLLM.Schema.strip_property_ordering()
 
           %{m | "json_schema" => Map.put(m["json_schema"], "schema", js)}
 

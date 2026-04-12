@@ -545,7 +545,10 @@ defmodule ReqLLM.Providers.OpenAI do
         json_schema
       end
 
-    json_schema = ReqLLM.Schema.order_json_schema(json_schema, compiled_schema.schema)
+    json_schema =
+      json_schema
+      |> ReqLLM.Schema.order_json_schema(compiled_schema.schema)
+      |> ReqLLM.Schema.strip_property_ordering()
 
     response_format = %{
       type: "json_schema",
