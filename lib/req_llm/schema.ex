@@ -244,7 +244,31 @@ defmodule ReqLLM.Schema do
   @spec order_json_schema(any(), any()) :: any()
   def order_json_schema(schema, source \\ nil)
 
-  def order_json_schema(%Jason.OrderedObject{} = schema, _source), do: schema
+  def order_json_schema(%Jason.OrderedObject{} = schema, source) do
+    child_sources = property_child_sources(source)
+    item_source = item_schema_source(source)
+    property_order = property_order(source, schema)
+
+    schema
+    |> Enum.map(fn {key, value} ->
+      key = normalize_schema_key(key)
+
+      ordered_value =
+        cond do
+          key == "properties" and is_map(value) ->
+            order_properties_map(value, property_order, child_sources)
+
+          key == "items" ->
+            order_json_schema(value, item_source)
+
+          true ->
+            order_json_schema(value, nil)
+        end
+
+      {key, ordered_value}
+    end)
+    |> Jason.OrderedObject.new()
+  end
 
   def order_json_schema(schema, source) when is_map(schema) and not is_struct(schema) do
     child_sources = property_child_sources(source)
@@ -286,7 +310,34 @@ defmodule ReqLLM.Schema do
   @spec with_property_ordering(any(), any()) :: any()
   def with_property_ordering(schema, source \\ nil)
 
-  def with_property_ordering(%Jason.OrderedObject{} = schema, _source), do: schema
+  def with_property_ordering(%Jason.OrderedObject{} = schema, source) do
+    child_sources = property_child_sources(source)
+    item_source = item_schema_source(source)
+    property_order = property_order(source, schema)
+
+    updated_schema =
+      schema
+      |> Enum.map(fn {key, value} ->
+        key = normalize_schema_key(key)
+
+        updated_value =
+          cond do
+            key == "properties" and is_map(value) ->
+              with_property_ordering_properties(value, child_sources)
+
+            key == "items" ->
+              with_property_ordering(value, item_source)
+
+            true ->
+              with_property_ordering(value, nil)
+          end
+
+        {key, updated_value}
+      end)
+      |> Jason.OrderedObject.new()
+
+    maybe_put_property_ordering(updated_schema, property_order)
+  end
 
   def with_property_ordering(schema, source) when is_map(schema) and not is_struct(schema) do
     child_sources = property_child_sources(source)
@@ -300,10 +351,7 @@ defmodule ReqLLM.Schema do
         updated_value =
           cond do
             key == "properties" and is_map(value) ->
-              Map.new(value, fn {prop_key, prop_schema} ->
-                prop_key = normalize_schema_key(prop_key)
-                {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
-              end)
+              with_property_ordering_properties(value, child_sources)
 
             key == "items" ->
               with_property_ordering(value, item_source)
@@ -315,18 +363,7 @@ defmodule ReqLLM.Schema do
         {key, updated_value}
       end)
 
-    case Map.get(updated_schema, "properties") do
-      properties
-      when is_map(properties) and map_size(properties) > 0 and is_list(property_order) ->
-        Map.put(
-          updated_schema,
-          "propertyOrdering",
-          finalized_property_order(properties, property_order)
-        )
-
-      _ ->
-        updated_schema
-    end
+    maybe_put_property_ordering(updated_schema, property_order)
   end
 
   def with_property_ordering(schema, _source) when is_list(schema) do
@@ -372,12 +409,24 @@ defmodule ReqLLM.Schema do
     end
   end
 
+  defp property_order(%Jason.OrderedObject{} = source, _schema) do
+    source["propertyOrdering"] || source[:propertyOrdering] ||
+      property_order_from_properties(source["properties"] || source[:properties])
+  end
+
   defp property_order(source, _schema) when is_map(source) and not is_struct(source) do
-    source["propertyOrdering"] || source[:propertyOrdering]
+    source["propertyOrdering"] || source[:propertyOrdering] ||
+      property_order_from_properties(source["properties"] || source[:properties])
+  end
+
+  defp property_order(_source, %Jason.OrderedObject{} = schema) do
+    schema["propertyOrdering"] || schema[:propertyOrdering] ||
+      property_order_from_properties(schema["properties"] || schema[:properties])
   end
 
   defp property_order(_source, schema) when is_map(schema) do
-    schema["propertyOrdering"] || schema[:propertyOrdering]
+    schema["propertyOrdering"] || schema[:propertyOrdering] ||
+      property_order_from_properties(schema["properties"] || schema[:properties])
   end
 
   defp property_order(_source, _schema), do: nil
@@ -389,6 +438,16 @@ defmodule ReqLLM.Schema do
       end)
     else
       %{}
+    end
+  end
+
+  defp property_child_sources(%Jason.OrderedObject{} = source) do
+    case source["properties"] || source[:properties] do
+      properties when is_map(properties) ->
+        Map.new(properties, fn {key, value} -> {normalize_schema_key(key), value} end)
+
+      _ ->
+        %{}
     end
   end
 
@@ -408,6 +467,10 @@ defmodule ReqLLM.Schema do
     if Keyword.keyword?(source), do: source
   end
 
+  defp item_schema_source(%Jason.OrderedObject{} = source) do
+    source["items"] || source[:items]
+  end
+
   defp item_schema_source(source) when is_map(source) and not is_struct(source) do
     source["items"] || source[:items]
   end
@@ -417,6 +480,33 @@ defmodule ReqLLM.Schema do
   defp nested_schema_source({:map, fields}) when is_list(fields), do: fields
   defp nested_schema_source({:list, item_type}), do: nested_schema_source(item_type)
   defp nested_schema_source(_type), do: nil
+
+  defp order_properties_map(%Jason.OrderedObject{} = properties, property_order, child_sources) do
+    normalized_entries =
+      Enum.map(properties, fn {key, value} ->
+        {normalize_schema_key(key), value}
+      end)
+
+    normalized_properties = Map.new(normalized_entries)
+
+    keys =
+      case property_order do
+        order when is_list(order) ->
+          finalized_property_order(normalized_properties, order)
+
+        _ ->
+          Enum.map(normalized_entries, &elem(&1, 0))
+      end
+
+    entries =
+      Enum.map(keys, fn key ->
+        key = normalize_schema_key(key)
+        value = Map.get(normalized_properties, key)
+        {key, order_json_schema(value, Map.get(child_sources, key))}
+      end)
+
+    Jason.OrderedObject.new(entries)
+  end
 
   defp order_properties_map(properties, property_order, child_sources) when is_map(properties) do
     normalized_properties =
@@ -445,7 +535,7 @@ defmodule ReqLLM.Schema do
 
   defp finalized_property_order(normalized_properties, property_order)
        when is_map(normalized_properties) and is_list(property_order) do
-    existing_keys = Map.keys(normalized_properties)
+    existing_keys = property_keys(normalized_properties)
 
     normalized_property_order =
       property_order
@@ -454,6 +544,68 @@ defmodule ReqLLM.Schema do
       |> Enum.uniq()
 
     normalized_property_order ++ Enum.reject(existing_keys, &(&1 in normalized_property_order))
+  end
+
+  defp maybe_put_property_ordering(schema, property_order)
+       when is_list(property_order) and is_map(schema) do
+    properties = schema["properties"] || schema[:properties]
+
+    if is_map(properties) and schema_object_size(properties) > 0 do
+      finalized = finalized_property_order(properties, property_order)
+
+      case schema do
+        %Jason.OrderedObject{} ->
+          put_ordered_object(schema, "propertyOrdering", finalized)
+
+        _ ->
+          Map.put(schema, "propertyOrdering", finalized)
+      end
+    else
+      schema
+    end
+  end
+
+  defp maybe_put_property_ordering(schema, _property_order), do: schema
+
+  defp with_property_ordering_properties(%Jason.OrderedObject{} = properties, child_sources) do
+    properties
+    |> Enum.map(fn {prop_key, prop_schema} ->
+      prop_key = normalize_schema_key(prop_key)
+      {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
+    end)
+    |> Jason.OrderedObject.new()
+  end
+
+  defp with_property_ordering_properties(properties, child_sources) when is_map(properties) do
+    Map.new(properties, fn {prop_key, prop_schema} ->
+      prop_key = normalize_schema_key(prop_key)
+      {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
+    end)
+  end
+
+  defp property_order_from_properties(%Jason.OrderedObject{} = properties) do
+    Enum.map(properties, fn {key, _value} -> normalize_schema_key(key) end)
+  end
+
+  defp property_order_from_properties(_properties), do: nil
+
+  defp property_keys(%Jason.OrderedObject{} = properties) do
+    Enum.map(properties, fn {key, _value} -> normalize_schema_key(key) end)
+  end
+
+  defp property_keys(properties) when is_map(properties) do
+    Enum.map(Map.keys(properties), &normalize_schema_key/1)
+  end
+
+  defp schema_object_size(%Jason.OrderedObject{values: values}), do: length(values)
+  defp schema_object_size(properties) when is_map(properties), do: map_size(properties)
+
+  defp put_ordered_object(%Jason.OrderedObject{values: values}, key, value) do
+    values
+    |> Enum.reject(fn {existing_key, _existing_value} ->
+      normalize_schema_key(existing_key) == key
+    end)
+    |> then(&Jason.OrderedObject.new(&1 ++ [{key, value}]))
   end
 
   @doc false

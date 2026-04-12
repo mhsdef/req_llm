@@ -250,6 +250,52 @@ defmodule ReqLLM.Providers.GoogleVertex.GeminiTest do
              ]
     end
 
+    test "infers propertyOrdering from ordered JSON schema maps for gemini-2.5-flash" do
+      context = context_fixture("Generate a profile")
+
+      compiled_schema = %{
+        schema: %{
+          "type" => "object",
+          "properties" =>
+            Jason.OrderedObject.new([
+              {"zeta", %Jason.OrderedObject{values: [{"type", "string"}]}},
+              {"alpha", %Jason.OrderedObject{values: [{"type", "string"}]}},
+              {"beta",
+               %Jason.OrderedObject{
+                 values: [
+                   {"type", "object"},
+                   {"properties",
+                    Jason.OrderedObject.new([
+                      {"third", %Jason.OrderedObject{values: [{"type", "string"}]}},
+                      {"first", %Jason.OrderedObject{values: [{"type", "string"}]}},
+                      {"second", %Jason.OrderedObject{values: [{"type", "string"}]}}
+                    ])}
+                 ]
+               }}
+            ])
+        }
+      }
+
+      body =
+        Gemini.format_request(
+          "gemini-2.5-flash",
+          context,
+          operation: :object,
+          compiled_schema: compiled_schema,
+          max_tokens: 1000
+        )
+
+      response_schema = body["generationConfig"]["responseJsonSchema"]
+
+      assert response_schema["propertyOrdering"] == ["zeta", "alpha", "beta"]
+
+      assert response_schema["properties"]["beta"]["propertyOrdering"] == [
+               "third",
+               "first",
+               "second"
+             ]
+    end
+
     test "infers propertyOrdering for array item objects for gemini-2.5-flash" do
       context = context_fixture("Generate a profile")
 

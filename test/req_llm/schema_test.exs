@@ -717,6 +717,39 @@ defmodule ReqLLM.SchemaTest do
 
       assert ordered_object_keys(ordered_schema["properties"]) == ["beta", "alpha"]
     end
+
+    test "with_property_ordering/2 infers ordering from ordered property maps" do
+      schema = %{
+        "type" => "object",
+        "properties" =>
+          Jason.OrderedObject.new([
+            {"zeta", %Jason.OrderedObject{values: [{"type", "string"}]}},
+            {"alpha", %Jason.OrderedObject{values: [{"type", "string"}]}},
+            {"beta",
+             %Jason.OrderedObject{
+               values: [
+                 {"type", "object"},
+                 {"properties",
+                  Jason.OrderedObject.new([
+                    {"third", %Jason.OrderedObject{values: [{"type", "string"}]}},
+                    {"first", %Jason.OrderedObject{values: [{"type", "string"}]}},
+                    {"second", %Jason.OrderedObject{values: [{"type", "string"}]}}
+                  ])}
+               ]
+             }}
+          ])
+      }
+
+      ordered_schema = Schema.with_property_ordering(schema)
+
+      assert ordered_schema["propertyOrdering"] == ["zeta", "alpha", "beta"]
+
+      assert ordered_schema["properties"]["beta"]["propertyOrdering"] == [
+               "third",
+               "first",
+               "second"
+             ]
+    end
   end
 
   describe "validate/2" do

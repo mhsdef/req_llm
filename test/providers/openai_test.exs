@@ -1361,6 +1361,43 @@ defmodule ReqLLM.Providers.OpenAITest do
   end
 
   describe "ResponsesAPI structured output key ordering" do
+    test "gpt-5-mini preserves already ordered schemas in encoded json_schema" do
+      response_format = %{
+        type: "json_schema",
+        json_schema: %{
+          name: "profile_schema",
+          strict: true,
+          schema: %{
+            "type" => "object",
+            "properties" =>
+              Jason.OrderedObject.new([
+                {"zeta", %{"type" => "string"}},
+                {"alpha", %{"type" => "string"}},
+                {"beta",
+                 %{
+                   "type" => "object",
+                   "properties" =>
+                     Jason.OrderedObject.new([
+                       {"third", %{"type" => "string"}},
+                       {"first", %{"type" => "string"}},
+                       {"second", %{"type" => "string"}}
+                     ])
+                 }}
+              ])
+          }
+        }
+      }
+
+      text_format = ReqLLM.Providers.OpenAI.ResponsesAPI.encode_text_format(response_format)
+      schema = text_format["format"]["schema"]
+      properties = schema["properties"]
+
+      refute Map.has_key?(schema, "propertyOrdering")
+      refute Map.has_key?(properties["beta"], "propertyOrdering")
+      assert ordered_object_keys(properties) == ["zeta", "alpha", "beta"]
+      assert ordered_object_keys(properties["beta"]["properties"]) == ["third", "first", "second"]
+    end
+
     test "gpt-5-mini preserves schema property order in encoded json_schema" do
       {:ok, model} = ReqLLM.model("openai:gpt-5-mini")
 
