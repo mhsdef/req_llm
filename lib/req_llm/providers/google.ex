@@ -1230,7 +1230,10 @@ defmodule ReqLLM.Providers.Google do
   defp json_schema_supported?(_), do: false
 
   defp put_schema_for_model(generation_config, model_name, compiled_schema) do
-    json_schema = ReqLLM.Schema.to_json(compiled_schema.schema)
+    json_schema =
+      compiled_schema.schema
+      |> ReqLLM.Schema.to_json()
+      |> ReqLLM.Schema.with_property_ordering(compiled_schema.schema)
 
     if json_schema_supported?(model_name) and json_schema?(json_schema) do
       Map.put(generation_config, :responseJsonSchema, json_schema)

@@ -234,7 +234,181 @@ defmodule ReqLLM.Schema do
     |> normalize_json_schema()
   end
 
+  @doc """
+  Preserves object property order in a JSON Schema for JSON encoding.
+
+  This rewrites `properties` maps into `Jason.OrderedObject` values using the
+  source schema order when available, or an explicit `propertyOrdering` field
+  when present in the JSON Schema.
+  """
+  @spec order_json_schema(any(), any()) :: any()
+  def order_json_schema(schema, source \\ nil)
+
+  def order_json_schema(%Jason.OrderedObject{} = schema, _source), do: schema
+
+  def order_json_schema(schema, source) when is_map(schema) and not is_struct(schema) do
+    child_sources = property_child_sources(source)
+    item_source = item_schema_source(source)
+    property_order = property_order(source, schema)
+
+    Map.new(schema, fn {key, value} ->
+      key = normalize_schema_key(key)
+
+      ordered_value =
+        cond do
+          key == "properties" and is_map(value) ->
+            order_properties_map(value, property_order, child_sources)
+
+          key == "items" ->
+            order_json_schema(value, item_source)
+
+          true ->
+            order_json_schema(value, nil)
+        end
+
+      {key, ordered_value}
+    end)
+  end
+
+  def order_json_schema(schema, _source) when is_list(schema) do
+    Enum.map(schema, &order_json_schema(&1, nil))
+  end
+
+  def order_json_schema(schema, _source), do: schema
+
+  @doc """
+  Adds inferred `propertyOrdering` recursively to a JSON Schema.
+
+  When the source schema is a keyword list, property ordering follows that
+  source order. When the schema already includes `propertyOrdering`, it is
+  preserved as-is.
+  """
+  @spec with_property_ordering(any(), any()) :: any()
+  def with_property_ordering(schema, source \\ nil)
+
+  def with_property_ordering(%Jason.OrderedObject{} = schema, _source), do: schema
+
+  def with_property_ordering(schema, source) when is_map(schema) and not is_struct(schema) do
+    child_sources = property_child_sources(source)
+    item_source = item_schema_source(source)
+    property_order = property_order(source, schema)
+
+    updated_schema =
+      Map.new(schema, fn {key, value} ->
+        key = normalize_schema_key(key)
+
+        updated_value =
+          cond do
+            key == "properties" and is_map(value) ->
+              Map.new(value, fn {prop_key, prop_schema} ->
+                prop_key = normalize_schema_key(prop_key)
+                {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
+              end)
+
+            key == "items" ->
+              with_property_ordering(value, item_source)
+
+            true ->
+              with_property_ordering(value, nil)
+          end
+
+        {key, updated_value}
+      end)
+
+    case Map.get(updated_schema, "properties") do
+      properties
+      when is_map(properties) and map_size(properties) > 0 and is_list(property_order) ->
+        Map.put_new(updated_schema, "propertyOrdering", property_order)
+
+      _ ->
+        updated_schema
+    end
+  end
+
+  def with_property_ordering(schema, _source) when is_list(schema) do
+    Enum.map(schema, &with_property_ordering(&1, nil))
+  end
+
+  def with_property_ordering(schema, _source), do: schema
+
   # Private helper functions
+
+  defp normalize_schema_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp normalize_schema_key(key), do: key
+
+  defp property_order(source, _schema) when is_list(source) do
+    if Keyword.keyword?(source) do
+      Enum.map(source, fn {key, _opts} -> to_string(key) end)
+    end
+  end
+
+  defp property_order(source, _schema) when is_map(source) and not is_struct(source) do
+    source["propertyOrdering"] || source[:propertyOrdering]
+  end
+
+  defp property_order(_source, schema) when is_map(schema) do
+    schema["propertyOrdering"] || schema[:propertyOrdering]
+  end
+
+  defp property_order(_source, _schema), do: nil
+
+  defp property_child_sources(source) when is_list(source) do
+    if Keyword.keyword?(source) do
+      Map.new(source, fn {key, opts} ->
+        {to_string(key), nested_schema_source(Keyword.get(opts, :type))}
+      end)
+    else
+      %{}
+    end
+  end
+
+  defp property_child_sources(source) when is_map(source) and not is_struct(source) do
+    case source["properties"] || source[:properties] do
+      properties when is_map(properties) ->
+        Map.new(properties, fn {key, value} -> {normalize_schema_key(key), value} end)
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp property_child_sources(_source), do: %{}
+
+  defp item_schema_source(source) when is_map(source) and not is_struct(source) do
+    source["items"] || source[:items]
+  end
+
+  defp item_schema_source(_source), do: nil
+
+  defp nested_schema_source({:map, fields}) when is_list(fields), do: fields
+  defp nested_schema_source({:list, item_type}), do: nested_schema_source(item_type)
+  defp nested_schema_source(_type), do: nil
+
+  defp order_properties_map(properties, property_order, child_sources) when is_map(properties) do
+    normalized_properties =
+      Map.new(properties, fn {key, value} ->
+        {normalize_schema_key(key), value}
+      end)
+
+    keys =
+      case property_order do
+        order when is_list(order) ->
+          existing_keys = Map.keys(normalized_properties)
+          order ++ Enum.reject(existing_keys, &(&1 in order))
+
+        _ ->
+          Map.keys(normalized_properties)
+      end
+
+    entries =
+      Enum.map(keys, fn key ->
+        key = normalize_schema_key(key)
+        value = Map.get(normalized_properties, key)
+        {key, order_json_schema(value, Map.get(child_sources, key))}
+      end)
+
+    Jason.OrderedObject.new(entries)
+  end
 
   @doc false
   @spec zoi_schema?(any()) :: boolean()

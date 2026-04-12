@@ -255,11 +255,20 @@ defmodule ReqLLM.Providers.OpenAI.ChatAPI do
     normalized =
       case rf do
         %{type: "json_schema", json_schema: %{schema: schema}} = m when is_list(schema) ->
-          put_in(m, [:json_schema, :schema], ReqLLM.Schema.to_json(schema))
+          ordered_schema =
+            schema
+            |> ReqLLM.Schema.to_json()
+            |> ReqLLM.Schema.order_json_schema(schema)
+
+          put_in(m, [:json_schema, :schema], ordered_schema)
 
         %{"type" => "json_schema", "json_schema" => %{"schema" => schema}} = m
         when is_list(schema) ->
-          js = ReqLLM.Schema.to_json(schema)
+          js =
+            schema
+            |> ReqLLM.Schema.to_json()
+            |> ReqLLM.Schema.order_json_schema(schema)
+
           %{m | "json_schema" => Map.put(m["json_schema"], "schema", js)}
 
         _ ->

@@ -1135,7 +1135,18 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
       case type do
         "json_schema" ->
           json_schema = response_format[:json_schema] || response_format["json_schema"]
-          schema = ReqLLM.Schema.to_json(json_schema[:schema] || json_schema["schema"])
+          schema_source = json_schema[:schema] || json_schema["schema"]
+
+          schema =
+            case schema_source do
+              %Jason.OrderedObject{} = ordered_schema ->
+                ordered_schema
+
+              _ ->
+                schema_source
+                |> ReqLLM.Schema.to_json()
+                |> ReqLLM.Schema.order_json_schema(schema_source)
+            end
 
           %{
             "format" => %{

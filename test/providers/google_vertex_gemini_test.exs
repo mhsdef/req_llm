@@ -178,6 +178,79 @@ defmodule ReqLLM.Providers.GoogleVertex.GeminiTest do
     end
   end
 
+  describe "format_request/3 structured output property ordering" do
+    test "preserves explicit propertyOrdering for gemini-2.5-flash" do
+      context = context_fixture("Generate a profile")
+
+      compiled_schema = %{
+        schema: %{
+          "type" => "object",
+          "properties" => %{
+            "alpha" => %{"type" => "string"},
+            "beta" => %{"type" => "string"},
+            "gamma" => %{"type" => "string"}
+          },
+          "required" => ["alpha"],
+          "propertyOrdering" => ["gamma", "alpha", "beta"]
+        }
+      }
+
+      body =
+        Gemini.format_request(
+          "gemini-2.5-flash",
+          context,
+          operation: :object,
+          compiled_schema: compiled_schema,
+          max_tokens: 1000
+        )
+
+      assert body["generationConfig"]["responseJsonSchema"]["propertyOrdering"] == [
+               "gamma",
+               "alpha",
+               "beta"
+             ]
+    end
+
+    test "infers propertyOrdering from schema order for gemini-2.5-flash" do
+      context = context_fixture("Generate a profile")
+
+      compiled_schema = %{
+        schema: [
+          zeta: [type: :string, required: true],
+          alpha: [type: :string],
+          beta: [
+            type:
+              {:map,
+               [
+                 third: [type: :string, required: true],
+                 first: [type: :string],
+                 second: [type: :string]
+               ]}
+          ]
+        ]
+      }
+
+      body =
+        Gemini.format_request(
+          "gemini-2.5-flash",
+          context,
+          operation: :object,
+          compiled_schema: compiled_schema,
+          max_tokens: 1000
+        )
+
+      response_schema = body["generationConfig"]["responseJsonSchema"]
+
+      assert response_schema["propertyOrdering"] == ["zeta", "alpha", "beta"]
+
+      assert response_schema["properties"]["beta"]["propertyOrdering"] == [
+               "third",
+               "first",
+               "second"
+             ]
+    end
+  end
+
   describe "ResponseBuilder - streaming reasoning_details extraction" do
     alias ReqLLM.Providers.Google.ResponseBuilder
 
