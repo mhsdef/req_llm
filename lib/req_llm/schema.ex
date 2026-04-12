@@ -243,62 +243,7 @@ defmodule ReqLLM.Schema do
   """
   @spec order_json_schema(any(), any()) :: any()
   def order_json_schema(schema, source \\ nil)
-
-  def order_json_schema(%Jason.OrderedObject{} = schema, source) do
-    child_sources = property_child_sources(source)
-    item_source = item_schema_source(source)
-    property_order = property_order(source, schema)
-
-    schema
-    |> Enum.map(fn {key, value} ->
-      key = normalize_schema_key(key)
-
-      ordered_value =
-        cond do
-          key == "properties" and is_map(value) ->
-            order_properties_map(value, property_order, child_sources)
-
-          key == "items" ->
-            order_json_schema(value, item_source)
-
-          true ->
-            order_json_schema(value, nil)
-        end
-
-      {key, ordered_value}
-    end)
-    |> Jason.OrderedObject.new()
-  end
-
-  def order_json_schema(schema, source) when is_map(schema) and not is_struct(schema) do
-    child_sources = property_child_sources(source)
-    item_source = item_schema_source(source)
-    property_order = property_order(source, schema)
-
-    Map.new(schema, fn {key, value} ->
-      key = normalize_schema_key(key)
-
-      ordered_value =
-        cond do
-          key == "properties" and is_map(value) ->
-            order_properties_map(value, property_order, child_sources)
-
-          key == "items" ->
-            order_json_schema(value, item_source)
-
-          true ->
-            order_json_schema(value, nil)
-        end
-
-      {key, ordered_value}
-    end)
-  end
-
-  def order_json_schema(schema, _source) when is_list(schema) do
-    Enum.map(schema, &order_json_schema(&1, nil))
-  end
-
-  def order_json_schema(schema, _source), do: schema
+  def order_json_schema(schema, source), do: walk_schema(schema, source, :order)
 
   @doc """
   Adds inferred `propertyOrdering` recursively to a JSON Schema.
@@ -310,67 +255,8 @@ defmodule ReqLLM.Schema do
   @spec with_property_ordering(any(), any()) :: any()
   def with_property_ordering(schema, source \\ nil)
 
-  def with_property_ordering(%Jason.OrderedObject{} = schema, source) do
-    child_sources = property_child_sources(source)
-    item_source = item_schema_source(source)
-    property_order = property_order(source, schema)
-
-    updated_schema =
-      schema
-      |> Enum.map(fn {key, value} ->
-        key = normalize_schema_key(key)
-
-        updated_value =
-          cond do
-            key == "properties" and is_map(value) ->
-              with_property_ordering_properties(value, child_sources)
-
-            key == "items" ->
-              with_property_ordering(value, item_source)
-
-            true ->
-              with_property_ordering(value, nil)
-          end
-
-        {key, updated_value}
-      end)
-      |> Jason.OrderedObject.new()
-
-    maybe_put_property_ordering(updated_schema, property_order)
-  end
-
-  def with_property_ordering(schema, source) when is_map(schema) and not is_struct(schema) do
-    child_sources = property_child_sources(source)
-    item_source = item_schema_source(source)
-    property_order = property_order(source, schema)
-
-    updated_schema =
-      Map.new(schema, fn {key, value} ->
-        key = normalize_schema_key(key)
-
-        updated_value =
-          cond do
-            key == "properties" and is_map(value) ->
-              with_property_ordering_properties(value, child_sources)
-
-            key == "items" ->
-              with_property_ordering(value, item_source)
-
-            true ->
-              with_property_ordering(value, nil)
-          end
-
-        {key, updated_value}
-      end)
-
-    maybe_put_property_ordering(updated_schema, property_order)
-  end
-
-  def with_property_ordering(schema, _source) when is_list(schema) do
-    Enum.map(schema, &with_property_ordering(&1, nil))
-  end
-
-  def with_property_ordering(schema, _source), do: schema
+  def with_property_ordering(schema, source),
+    do: walk_schema(schema, source, :with_property_ordering)
 
   @doc """
   Removes `propertyOrdering` recursively from a JSON Schema.
@@ -402,6 +288,69 @@ defmodule ReqLLM.Schema do
 
   defp normalize_schema_key(key) when is_atom(key), do: Atom.to_string(key)
   defp normalize_schema_key(key), do: key
+
+  defp walk_schema(%Jason.OrderedObject{} = schema, source, mode) do
+    {child_sources, item_source, property_order} = schema_walk_context(source, schema)
+
+    schema
+    |> Enum.map(&walk_schema_entry(&1, child_sources, item_source, property_order, mode))
+    |> Jason.OrderedObject.new()
+    |> finalize_walked_schema(property_order, mode)
+  end
+
+  defp walk_schema(schema, source, mode) when is_map(schema) and not is_struct(schema) do
+    {child_sources, item_source, property_order} = schema_walk_context(source, schema)
+
+    schema
+    |> Map.new(&walk_schema_entry(&1, child_sources, item_source, property_order, mode))
+    |> finalize_walked_schema(property_order, mode)
+  end
+
+  defp walk_schema(schema, _source, mode) when is_list(schema) do
+    Enum.map(schema, &walk_schema(&1, nil, mode))
+  end
+
+  defp walk_schema(schema, _source, _mode), do: schema
+
+  defp walk_schema_entry({key, value}, child_sources, item_source, property_order, mode) do
+    key = normalize_schema_key(key)
+
+    walked_value =
+      cond do
+        key == "properties" and is_map(value) ->
+          walk_properties(value, child_sources, property_order, mode)
+
+        key == "items" ->
+          walk_schema(value, item_source, mode)
+
+        true ->
+          walk_schema(value, nil, mode)
+      end
+
+    {key, walked_value}
+  end
+
+  defp walk_properties(properties, child_sources, property_order, :order) do
+    order_properties_map(properties, property_order, child_sources)
+  end
+
+  defp walk_properties(properties, child_sources, _property_order, :with_property_ordering) do
+    with_property_ordering_properties(properties, child_sources)
+  end
+
+  defp finalize_walked_schema(schema, property_order, :with_property_ordering) do
+    maybe_put_property_ordering(schema, property_order)
+  end
+
+  defp finalize_walked_schema(schema, _property_order, :order), do: schema
+
+  defp schema_walk_context(source, schema) do
+    {
+      property_child_sources(source),
+      item_schema_source(source),
+      property_order(source, schema)
+    }
+  end
 
   defp property_order(source, _schema) when is_list(source) do
     if Keyword.keyword?(source) do
@@ -502,7 +451,7 @@ defmodule ReqLLM.Schema do
       Enum.map(keys, fn key ->
         key = normalize_schema_key(key)
         value = Map.get(normalized_properties, key)
-        {key, order_json_schema(value, Map.get(child_sources, key))}
+        {key, walk_schema(value, Map.get(child_sources, key), :order)}
       end)
 
     Jason.OrderedObject.new(entries)
@@ -527,7 +476,7 @@ defmodule ReqLLM.Schema do
       Enum.map(keys, fn key ->
         key = normalize_schema_key(key)
         value = Map.get(normalized_properties, key)
-        {key, order_json_schema(value, Map.get(child_sources, key))}
+        {key, walk_schema(value, Map.get(child_sources, key), :order)}
       end)
 
     Jason.OrderedObject.new(entries)
@@ -571,7 +520,9 @@ defmodule ReqLLM.Schema do
     properties
     |> Enum.map(fn {prop_key, prop_schema} ->
       prop_key = normalize_schema_key(prop_key)
-      {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
+
+      {prop_key,
+       walk_schema(prop_schema, Map.get(child_sources, prop_key), :with_property_ordering)}
     end)
     |> Jason.OrderedObject.new()
   end
@@ -579,7 +530,9 @@ defmodule ReqLLM.Schema do
   defp with_property_ordering_properties(properties, child_sources) when is_map(properties) do
     Map.new(properties, fn {prop_key, prop_schema} ->
       prop_key = normalize_schema_key(prop_key)
-      {prop_key, with_property_ordering(prop_schema, Map.get(child_sources, prop_key))}
+
+      {prop_key,
+       walk_schema(prop_schema, Map.get(child_sources, prop_key), :with_property_ordering)}
     end)
   end
 
